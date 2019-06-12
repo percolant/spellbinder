@@ -1,5 +1,12 @@
+import json
+from time import sleep
 from django.db import models
+from django.db.models.signals import post_save
 from django.contrib.auth import get_user_model
+
+from base import utils
+
+requests = utils.requests_retry_session()
 
 
 COLORS = [
@@ -16,7 +23,7 @@ FORMATS = [
     ('Legacy', 'Legacy'),
     ('Pauper', 'Pauper'),
     ('Vintage', 'Vintage'),
-    ('EDH', 'EDH')
+    ('Commander', 'Commander')
 ]
 
 LANGUAGES = [
@@ -137,3 +144,77 @@ class CardInstance(models.Model):
             self.language,
             self.state
         )
+
+
+def upload_cards_for_edition(sender, **kwargs):
+    code = kwargs['instance'].code.lower()
+
+    if kwargs['created']:
+        response = requests.get(
+            'https://api.scryfall.com/sets/{}/'.format(code)
+        )
+
+        try:
+            data = response.json()
+            card_count = data['card_count']
+        except Exception:
+            # TODO implement error logging/notification
+            return False
+
+        for card in range(card_count):
+            sleep(0.05)
+            response = requests.get(
+                'https://api.scryfall.com/cards/{}/{}'.format(
+                    code,
+                    card + 1
+                )
+            )
+            data = response.json()
+            if data['object'] == 'card':
+                if 'cmc' in data:
+                    cmc = data['cmc']
+                else:
+                    cmc = 0
+                try:
+                    artist = Artist.objects.get(name=data['artist'])
+                except Artist.DoesNotExist:
+                    artist = Artist.objects.create(name=data['artist'])
+
+                card = Card.objects.create(
+                    number=data['collector_number'],
+                    edition=kwargs['instance'],
+                    name=data['name'],
+                    type_line=data['type_line'],
+                    cmc=cmc,
+                    image_url=data['image_uris']['png'],
+                    artist=artist,
+                    oracle_text=data['oracle_text']
+                )
+
+                if 'mana_cost' in data:
+                    card.mana_cost = utils.strip_braces(data['mana_cost'])
+                if 'power' in data:
+                    card.power = data['power']
+                if 'toughness' in data:
+                    card.toughness = data['toughness']
+                if 'loyalty' in data:
+                    card.loyalty = data['loyalty']
+
+                for color in data['color_identity']:
+                    card.colors.add(Color.objects.get(color=color).pk)
+                for format in data['legalities']:
+                    try:
+                        format_obj = Format.objects.get(
+                            format=format.capitalize()
+                        )
+                        if data['legalities'][format] == 'legal':
+                            card.formats.add(
+                                Format.objects.get(format=format_obj).pk
+                            )
+                    except Format.DoesNotExist:
+                        pass
+
+                card.save()
+                return True
+
+post_save.connect(upload_cards_for_edition, sender=Edition)
