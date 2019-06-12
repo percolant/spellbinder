@@ -46,6 +46,13 @@ STATES = [
     ('PL', 'Played')
 ]
 
+RARITIES = [
+    ('C', 'Common'),
+    ('U', 'Uncommon'),
+    ('R', 'Rare'),
+    ('M', 'Mythic')
+]
+
 
 class Edition(models.Model):
     code = models.CharField(max_length=3, blank=False, unique=True)
@@ -86,6 +93,21 @@ class Artist(models.Model):
         return self.name
 
 
+class Rarity(models.Model):
+    rarity = models.CharField(
+        max_length=1,
+        blank=False,
+        unique=True,
+        choices=RARITIES
+    )
+
+    class Meta:
+        verbose_name_plural = 'Rarities'
+
+    def __str__(self):
+        return self.get_rarity_display()
+
+
 class Card(models.Model):
     number = models.IntegerField(blank=False)
     edition = models.ForeignKey(
@@ -95,6 +117,11 @@ class Card(models.Model):
     )
     name = models.CharField(max_length=50, blank=False)
     type_line = models.CharField(max_length=50, blank=False)
+    rarity = models.ForeignKey(
+        Rarity,
+        related_name='cards',
+        on_delete=models.PROTECT
+    )
     colors = models.ManyToManyField(Color, blank=True)
     cmc = models.IntegerField(blank=False)
     mana_cost = models.CharField(max_length=15, blank=True, null=True)
@@ -103,7 +130,11 @@ class Card(models.Model):
     loyalty = models.IntegerField(blank=True, null=True)
     formats = models.ManyToManyField(Format)
     image_url = models.URLField(max_length=255, blank=True, null=True)
-    artist = models.ForeignKey(Artist, on_delete=models.PROTECT)
+    artist = models.ForeignKey(
+        Artist,
+        related_name='cards',
+        on_delete=models.PROTECT
+    )
     oracle_text = models.TextField(blank=True, null=True)
     instances = models.ManyToManyField(
         get_user_model(),
@@ -180,25 +211,49 @@ def upload_cards_for_edition(sender, **kwargs):
                 except Artist.DoesNotExist:
                     artist = Artist.objects.create(name=data['artist'])
 
+                if data['rarity'] == 'common':
+                    rarity = Rarity.objects.get(rarity='C')
+                if data['rarity'] == 'uncommon':
+                    rarity = Rarity.objects.get(rarity='U')
+                if data['rarity'] == 'rare':
+                    rarity = Rarity.objects.get(rarity='R')
+                if data['rarity'] == 'mythic':
+                    rarity = Rarity.objects.get(rarity='M')
+
                 card = Card.objects.create(
                     number=data['collector_number'],
                     edition=kwargs['instance'],
                     name=data['name'],
                     type_line=data['type_line'],
+                    rarity=rarity,
                     cmc=cmc,
                     image_url=data['image_uris']['png'],
-                    artist=artist,
-                    oracle_text=data['oracle_text']
+                    artist=artist
                 )
 
                 if 'mana_cost' in data:
                     card.mana_cost = utils.strip_braces(data['mana_cost'])
                 if 'power' in data:
-                    card.power = data['power']
+                    if not data['power'].isalnum():
+                        card.power = 0
+                    else:
+                        card.power = data['power']
                 if 'toughness' in data:
-                    card.toughness = data['toughness']
+                    if not data['toughness'].isalnum():
+                        card.toughness = 0
+                    else:
+                        card.toughness = data['toughness']
                 if 'loyalty' in data:
                     card.loyalty = data['loyalty']
+
+                if 'oracle_text' in data:
+                    card.oracle_text = utils.strip_braces(data['oracle_text'])
+                if 'card_faces' in data:
+                    oracle_text = []
+                    for card_face in data['card_faces']:
+                        oracle_text.append(card_face['oracle_text'])
+                    oracle_text = '\n\n----------\n\n'.join(oracle_text)
+                    card.oracle_text = utils.strip_braces(oracle_text)
 
                 for color in data['color_identity']:
                     card.colors.add(Color.objects.get(color=color).pk)
@@ -215,6 +270,5 @@ def upload_cards_for_edition(sender, **kwargs):
                         pass
 
                 card.save()
-                return True
 
 post_save.connect(upload_cards_for_edition, sender=Edition)
