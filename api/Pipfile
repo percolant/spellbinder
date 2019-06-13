@@ -4,11 +4,28 @@ url = "https://pypi.org/simple"
 verify_ssl = true
 
 [dev-packages]
+httpretty = "*"
+pytest = "*"
+selenium = "*"
+pytest-django = "*"
+pytest-xdist = "*"
+pytest-watch = "*"
+pytest-mock = "*"
+pytest-cov = "*"
+vcrpy = "*"
+autopep8 = "*"
+yapf = "*"
+jedi = "*"
+ipython = "*"
+pylint = "*"
+rope = "*"
+elpy = "*"
 
 [packages]
 django = "*"
 djangorestframework = "*"
 requests = "*"
+psycopg2-binary = "*"
 
 [requires]
 python_version = "3.6"
